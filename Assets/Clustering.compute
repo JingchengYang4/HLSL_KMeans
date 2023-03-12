@@ -1,0 +1,121 @@
+#pragma kernel Clustering
+
+struct grid
+{
+    int x;
+    int y;
+    int cover;
+};
+
+struct center
+{
+    int x;
+    int y;
+
+    int building_type;
+
+    int totalX;
+    int totalY;
+    int cumX;
+    int cumY;
+};
+
+RWTexture2D<float> display;
+
+RWBuffer<float> ScoreBuffer;
+
+RWStructuredBuffer<grid> GridBuffer;
+
+RWStructuredBuffer<center> CentroidsBuffer;
+
+RWBuffer<int> LandUsageBuffer;
+
+int k_count;
+
+int width;
+int height;
+
+int building_count;
+
+float distance_power;
+
+[numthreads(8,8,1)]
+void Clustering (uint3 id : SV_DispatchThreadID)
+{
+    if(id.x >= width || id.y >= height) return;
+
+    const int index = id.y * width + id.x;
+
+    if(GridBuffer[index].cover <= 0)
+    {
+        display[id.xy] = 0;
+        if(id.y < 2 && id.x < building_count*2)
+        {
+            display[id.xy] = float(id.x/2+1)/building_count;
+        }
+        
+        return;
+    }
+
+    int finalK = 0;
+
+    float max_score = -99999;
+
+    float minDis = 99999;
+    
+    for(int j = 0; j < k_count; j++)
+    {
+        float distance = sqrt(pow(int(id.x) - CentroidsBuffer[j].x, 2) + pow(int(id.y) - CentroidsBuffer[j].y, 2));
+        if(distance < minDis)
+        {
+            minDis = distance;
+        }
+        
+        /*if(distance <= 0)
+        {
+            display[id.xy] = float(CentroidsBuffer[j].building_type+1)/building_count;
+            finalK = j;
+            break;
+        }*/
+        
+        //distance = 1 + distance * distance_power;//pow(distance, 0.1);
+        distance = pow(distance, distance_power);
+
+        //const int score_index = building_count * (j%4) + GridBuffer[index].cover - 1;
+        const int score_index = CentroidsBuffer[j].building_type * 4 + GridBuffer[index].cover - 1;
+        
+        //const float score = pow(ScoreBuffer[score_index], 100/distance);
+        const float score = ScoreBuffer[score_index]/distance;
+        
+        if(score > max_score)
+        {
+            max_score = score;
+            display[id.xy] = float(CentroidsBuffer[j].building_type+1)/building_count;
+            finalK = j;
+        }
+    }
+
+    float environment_score = 0;
+    const int coverType = GridBuffer[index].cover;
+
+    if(coverType == 4) environment_score = 0;
+    if(coverType == 3) environment_score = 1.2;
+    if(coverType == 1) environment_score = 1.05;
+    if(coverType == 0) environment_score = 1.15;
+
+    if(pow(environment_score, minDis) > max_score)
+    {
+        display[id.xy] = 0.03;
+    }
+    else
+    {
+        InterlockedAdd(LandUsageBuffer[GridBuffer[index].cover-1], 1);
+    }
+    
+    InterlockedAdd(CentroidsBuffer[finalK].cumX, id.x);
+    InterlockedAdd(CentroidsBuffer[finalK].cumY, id.y);
+    InterlockedAdd(CentroidsBuffer[finalK].totalX, 1);
+    InterlockedAdd(CentroidsBuffer[finalK].totalY, 1);
+
+    //display[id.xy] = GridBuffer[index].cover/4;
+}

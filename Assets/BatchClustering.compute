@@ -1,0 +1,142 @@
+#pragma kernel BatchClustering
+
+struct grid
+{
+    int x;
+    int y;
+    int cover;
+};
+
+struct center
+{
+    int x;
+    int y;
+
+    int building_type;
+
+    int totalX;
+    int totalY;
+    int cumX;
+    int cumY;
+};
+
+RWBuffer<float> ScoreBuffer;
+
+RWStructuredBuffer<grid> GridBuffer;
+
+RWStructuredBuffer<center> CentroidsBatchBuffer;
+
+RWBuffer<int> LandUsageBatchBuffer;
+
+RWBuffer<int> KCountBuffer;
+
+RWBuffer<int> BuildingAreaBuffer;
+
+int layer_size;
+
+int global_k_count;
+
+int building_count;
+
+float distance_power;
+
+RWTexture2D<float> display;
+
+int width;
+int height;
+
+[numthreads(8, 8, 8)]
+void BatchClustering (uint3 id : SV_DispatchThreadID)
+{
+    if(id.x >= width || id.y >= height || id.z >= layer_size) return;
+
+    const int index = id.y * width + id.x;
+
+    const int layer = id.z;
+
+    const int targetLayer = 0;
+
+    if(GridBuffer[index].cover <= 0)
+    {
+        if(layer == targetLayer)
+        {
+            display[id.xy] = 0;
+            if(id.y < 2 && id.x < building_count*2)
+            {
+                //display[id.xy] = 1000;
+                display[id.xy] = float(id.x/2+1)/building_count;
+            }
+        }
+        
+        return;
+    }
+
+    int finalK = 0;
+
+    float max_score = -99999;
+
+    float minDis = 99999;
+    
+    for(int j = 0; j < KCountBuffer[layer]; j++)
+    {
+        const int cindex = layer * global_k_count + j;
+        
+        float distance = sqrt(pow(GridBuffer[index].x - CentroidsBatchBuffer[cindex].x, 2) + pow(GridBuffer[index].y - CentroidsBatchBuffer[cindex].y, 2));
+        if(distance < minDis)
+        {
+            minDis = distance;
+        }
+
+        /*if(distance <= 0)
+        {
+            display[id.xy] = float(CentroidsBatchBuffer[j].building_type+1)/building_count;
+            finalK = cindex;
+            break;
+        }*/
+        
+        distance = pow(distance, distance_power);
+        
+        const int score_index = CentroidsBatchBuffer[cindex].building_type * 4 + GridBuffer[index].cover - 1;
+        
+        //const float score = pow(ScoreBuffer[score_index], 100/distance);
+        const float score = ScoreBuffer[score_index]/distance;
+        
+        if(score > max_score)
+        {
+            max_score = score;
+            if(layer == targetLayer)
+            {
+                display[id.xy] = float(CentroidsBatchBuffer[cindex].building_type+1)/building_count;
+            }
+            finalK = cindex;
+        }
+    }
+
+    float environment_score = 0;
+    const int coverType = GridBuffer[index].cover;
+
+    if(coverType == 4) environment_score = 0;
+    if(coverType == 3) environment_score = 1.2;
+    if(coverType == 1) environment_score = 1.05;
+    if(coverType == 0) environment_score = 1.15;
+
+    if(pow(environment_score, minDis) > max_score)
+    {
+        if(layer == targetLayer)
+        {
+            display[id.xy] = 0.03;
+        }
+    }
+    else
+    {
+        InterlockedAdd(LandUsageBatchBuffer[layer * 4 + GridBuffer[index].cover-1], 1);
+    }
+
+    InterlockedAdd(BuildingAreaBuffer[layer * building_count + CentroidsBatchBuffer[finalK].building_type], 1);
+    InterlockedAdd(CentroidsBatchBuffer[finalK].cumX, id.x);
+    InterlockedAdd(CentroidsBatchBuffer[finalK].cumY, id.y);
+    InterlockedAdd(CentroidsBatchBuffer[finalK].totalX, 1);
+    InterlockedAdd(CentroidsBatchBuffer[finalK].totalY, 1);
+
+    //display[id.xy] = GridBuffer[index].cover/4;
+}
