@@ -11,6 +11,10 @@ public struct AhpIndexJob : IJobParallelFor
     
     [ReadOnly]
     public NativeArray<int> buildingAreas;
+    
+    [WriteOnly]
+    [NativeDisableParallelForRestriction]
+    public NativeArray<float> landUsePercentage;
 
     [NativeDisableParallelForRestriction] 
     [WriteOnly]
@@ -21,6 +25,15 @@ public struct AhpIndexJob : IJobParallelFor
 
     [ReadOnly] 
     public int buildingCount;
+
+    [ReadOnly] 
+    public float environmentHarmIndexModifier;
+
+    [ReadOnly] 
+    public float longShortTermModifier;
+
+    [ReadOnly] 
+    public int question;
 
     public void Execute(int startIndex)
     {
@@ -43,13 +56,19 @@ public struct AhpIndexJob : IJobParallelFor
             float communityNeed = 0;
             if (i == 0)//housing
             {
-                profit = 223.8f;
+                profit = 201.42f;
                 //there are two values?
                 cost = 2152.85f;
                 paybackDuration = 10.6884f;
                 longTermDevelopment = 1.2f;
                 constructionDuration = 1;
                 communityNeed = 1f;
+
+                if (question == 3)
+                {
+                    paybackDuration = 9.6195f;
+                    profit = 223.8f;
+                }
             }
             else if (i == 1)//farms
             {
@@ -87,6 +106,12 @@ public struct AhpIndexJob : IJobParallelFor
                 longTermDevelopment = 0.7f;
                 constructionDuration = 3f;
                 communityNeed = 1.7f;
+                
+                if (question == 3)
+                {
+                    profit = 2.8047f;
+                    paybackDuration = 4.4052f;
+                }
             }
 
             int buildingArea = buildingAreas[startIndex*buildingCount+i];
@@ -114,6 +139,16 @@ public struct AhpIndexJob : IJobParallelFor
         environmentHarmIndex += landUsage[startIndex*4+1] * 1.0f / coverTypeArea[1] * 2;
         environmentHarmIndex /= 9f;
 
+        float totalUsedLand = 0;
+        float totalAvailableLand = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            totalUsedLand += landUsage[startIndex * 4 + i];
+            totalAvailableLand += coverTypeArea[i];
+        }
+
+        landUsePercentage[startIndex] = totalUsedLand / totalAvailableLand;
+
         /*for (int i = 0; i < 4; i++)
         {
             Debug.Log($"{landUsage[i]} / {coverTypeArea[i]}");
@@ -133,12 +168,15 @@ public struct AhpIndexJob : IJobParallelFor
 
         float index =
             0.379f * profitIndex +
-            0.179f * paybackIndex +
+            (0.179f-longShortTermModifier) * paybackIndex -
             0.122f * constructionCostIndex +
-            0.179f * longTermDevelopmentIndex +
-            0.066f * developmentDurationIndex -
-            0.032f * environmentHarmIndex +
+            (0.179f+longShortTermModifier) * longTermDevelopmentIndex +
+            0.066f * developmentDurationIndex +
             0.042f * communityFitIndex;
+
+        index *= (1 - 0.032f - environmentHarmIndexModifier) / (1 - 0.032f);
+
+        index -= (0.032f + environmentHarmIndexModifier) * environmentHarmIndex;
 
         indices[startIndex] = index;
     }

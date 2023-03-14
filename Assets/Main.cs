@@ -28,17 +28,13 @@ public class Main : MonoBehaviour
 
     private ComputeBuffer gridBuffer;
     private ComputeBuffer scoreBuffer;
-    private ComputeBuffer landUsageBuffer;
 
     public Text buildingLegendLabel;
-
-    private int kernel;
 
     private int width;
     private int height;
 
     public ComputeShader batchClusteringShader;
-    public ComputeShader clusteringShader;
 
     private int buildingCount = 4;
 
@@ -53,133 +49,23 @@ public class Main : MonoBehaviour
     public bool selectBuildings = false;
     private int[] selectedBuildings = new[] { 0, 1, 3, 5, 6 };
 
-    private bool inProcess = false;
-
-    public Text annotation;
-
-    public int totalIterations = 10000;
-    public int kCount = 5;
-    public float distancePower = 0.1f;
-    
-    public bool calculateMostClustered = false;
-
-    public int clusterRemoveThreshold = 4;
-    public bool removeLowClusters = false;
-
-    public float iterationUpdateRate = 0.01f;
-
-    public bool continuousCluster = false;
-
-    public bool evaluateMetrics = false;
-
-    private List<float> totalProfits = new List<float>();
-    private List<float> totalCosts = new List<float>();
-    private List<float> totalCommunityNeeds = new List<float>();
-
-    public bool distributionAnalysis = false;
-
-    public int numClusters = 0;
-
-    public LineChart lineChart;
-
     private int[] coverTypeArea;
 
-    public int populationSize = 100;
-    private List<Gene> population = new List<Gene>();
-
+    public bool fixedSeed = false;
     public int currentSeed;
 
     public Text seedLabel;
-    
-    private string screenshotDirectory = "/Users/jingchengyang/Documents/Land Cover Data/";
-
-    public bool recordEvolution = false;
 
     void Start()
     {
-        currentSeed = Random.Range(0, int.MaxValue);
+        if (!fixedSeed)
+        {
+            currentSeed = Random.Range(0, int.MaxValue);
+        }
         seedLabel.text = currentSeed.ToString();
         Random.InitState(currentSeed);
 
-        if (recordEvolution && !Directory.Exists(screenshotDirectory + currentSeed))
-        {
-            Directory.CreateDirectory(screenshotDirectory + currentSeed);
-        }
-        
-        float[,] map = JsonConvert.DeserializeObject<float[,]>(mapJson.text);
-        
-        width = map.GetLength(1); 
-        height = map.GetLength(0);
-
-        mapRender = new RenderTexture(width, height, 0, GraphicsFormat.R32_SFloat);
-        mapRender.enableRandomWrite = true;
-        mapRender.filterMode = FilterMode.Point;
-        mapRender.Create();
-
-        RenderTexture.active = mapRender;
-
-        grids = new NativeArray<Grid>(width * height, Allocator.Persistent);
-
-        coverTypeArea = Enumerable.Repeat(0, 4).ToArray();
-        landUsageBuffer = new ComputeBuffer(4, sizeof(int));
-
-        for (int x = 0; x < width; x++)
-        {
-            for (int y = 0; y < height; y++)
-            {
-                int coverType = (int) map[height - 1 - y, x];
-                if(coverType > 0) coverTypeArea[coverType - 1]++;
-                grids[y * width + x] = new Grid(x, y, coverType);
-            }
-        }
-
-        gridBuffer = new ComputeBuffer(grids.Length, Marshal.SizeOf(typeof(Grid)));
-        
-        float[,] scores = JsonConvert.DeserializeObject<float[,]>(buildingJson.text);
-        
-        buildingCount = scores.GetLength(1);
-
-        if (selectBuildings)
-        {
-            buildingCount = selectedBuildings.Length;
-        }
-        else
-        {
-            selectedBuildings = Enumerable.Range(0, buildingCount).ToArray();
-        }
-
-        int scoreSize = buildingCount * 4;
-
-        scoreBuffer = new ComputeBuffer(scoreSize, sizeof(float));
-
-        NativeArray<float> nativeScores = new NativeArray<float>(scoreSize, Allocator.Temp);
-        for (int i = 0; i < buildingCount; i++)
-        {
-            string line = "";
-            for (int j = 0; j < 4; j++)
-            {
-                nativeScores[i * 4 + j] = scores[j, selectedBuildings[i]];
-                line += $"{nativeScores[i * 4 + j]} ";
-            }
-            //Debug.Log(line);
-        }
-
-        scoreBuffer.SetData(nativeScores);
-
-        nativeScores.Dispose();
-
-        kernel = clusteringShader.FindKernel("Clustering");
-        
-        gridBuffer.SetData(grids);
-        
-        clusteringShader.SetBuffer(kernel, "GridBuffer", gridBuffer);
-        clusteringShader.SetBuffer(kernel, "ScoreBuffer", scoreBuffer);
-        clusteringShader.SetBuffer(kernel, "LandUsageBuffer", landUsageBuffer);
-        clusteringShader.SetTexture(kernel, "display", mapRender);
-        clusteringShader.SetInt("width", width);
-        clusteringShader.SetInt("height", height);
-        
-        display.material.SetTexture("_Map", mapRender);
+        InitializeForKMeans();
 
         buildingClusters = new int[buildingCount];
         for (int i = 0; i < buildingCount; i++)
@@ -190,56 +76,44 @@ public class Main : MonoBehaviour
 
         if (geneticAlgorithm)
         {
-            for (int i = 0; i < populationSize; i++)
-            {
-                var gene = new Gene();
-                gene.centroids = GenerateRandomCentroid();
-                population.Add(gene);
-            }
+            InitializeForGeneticAlgorithm();
         }
 
-        InitializeForBatching();
+        if (sensitivityAnalysis)
+        {
+            InitializeForSensitivityAnalysis();
+        }
+
+        float maxSize = Mathf.Max(width, height)/100f;
+
+
+        display.transform.localScale = new Vector3((width / 100f)/maxSize*0.93f, 1, (height / 100f)/maxSize * 0.93f);
     }
-
-    public Vector3 profitQuartiles;
-    public Vector3 costQuartiles;
-    public Vector3 communityNeedsQuartiles;
-
-    private float clusterIndex = 0;
-    
-    //GenerateRandomCentroid
-
-    public float evolutionRate = 1f;
-    public float timer = 5;
-    public bool geneticAlgorithm = false;
-    public int maxCentroidMutateOffset = 8;
-
-    private bool evolving = false;
-    private int evolutionIteration = 0;
-    private int evolutionIterationSinceLastChange = 0;
-    private float bestIndex = 0;
-
-    public Text evolutionLabel;
 
     private void Update()
     {
         if (geneticAlgorithm)
         {
+            
+            if (recordEvolution && Input.GetKeyDown(KeyCode.S))
+            {
+                TakeScreenshot();
+            }
+            
             timer -= Time.deltaTime;
             if (!evolving && (timer <= 0 || evolutionRate <= 0))
             {
                 timer = evolutionRate;
                 evolving = true;
+                if (evolutionIteration >= 500 && sensitivityAnalysis)
+                {
+                    ConductSensitivityAnalysis();
+                    return;
+                }
                 StartCoroutine(Evolution());
             }
             
             return;
-        }
-        
-        if ((Input.GetKeyDown(KeyCode.C) || continuousCluster) && !inProcess)
-        {
-            //inProcess = true;
-            //StartCoroutine(ClusterKMeans());
         }
 
         if (distributionAnalysis && Input.GetKeyDown(KeyCode.D))
@@ -251,12 +125,48 @@ public class Main : MonoBehaviour
         }
     }
 
-    public bool BatchProcess = true;
+    #region GeneticAlgorithm
 
+    [Header("Genetic Algorithm")]
+    public bool geneticAlgorithm = false;
+    
+    public float evolutionRate = 1f;
+    public float timer = 5;
+    public int maxCentroidMutateOffset = 8;
+
+    private bool evolving = false;
+    private int evolutionIteration = 0;
+    private int evolutionIterationSinceLastChange = 0;
+    private float bestIndex = 0;
+    
+    public int populationSize = 100;
+    private List<Gene> population = new List<Gene>();
+
+    public Text evolutionLabel;
+    
+    private string screenshotDirectory = "/Users/jingchengyang/Documents/Land Cover Data/";
+
+    public bool recordEvolution = false;
+
+    public void InitializeForGeneticAlgorithm()
+    {
+        if (recordEvolution && !Directory.Exists(screenshotDirectory + currentSeed))
+        {
+            Directory.CreateDirectory(screenshotDirectory + currentSeed);
+        }
+        
+        for (int i = 0; i < populationSize; i++)
+        {
+            var gene = new Gene();
+            gene.centroids = GenerateRandomCentroid();
+            population.Add(gene);
+        }
+    }
+    
     IEnumerator Evolution()
     {
         evolutionIteration++;
-        
+
         ClusterKMeansBatch();
 
         population = population.OrderByDescending(x => x.index).ToList();
@@ -265,18 +175,24 @@ public class Main : MonoBehaviour
 
         evolutionIterationSinceLastChange++;
 
+        if (sensitivityAnalysis)
+        {
+            if (evolutionIteration % sensitivitySamplingInterval == 0)
+            {
+                saScore.Add(population[0].index);
+                landPercent.Add(population[0].landUsePercentage);
+            }
+        }
+
         if (population[0].index > bestIndex)
         {
             bestIndex = population[0].index;
-            Debug.Log(bestIndex);
+            //Debug.Log(bestIndex);
             evolutionIterationSinceLastChange = 0;
             if (recordEvolution)
             {
-                yield return null;
-                ScreenCapture.CaptureScreenshot($"{screenshotDirectory}{currentSeed}/{evolutionIteration}.png");
+                TakeScreenshot();
             }
-            
-            yield return null;
         }
 
         for (int i = populationSize / 2; i < populationSize; i++)
@@ -298,6 +214,18 @@ public class Main : MonoBehaviour
         evolutionLabel.text = $"Evolution Iteration: {evolutionIteration}\nHighest Index: {bestIndex}\nIterations since last change: {evolutionIterationSinceLastChange}";
 
         evolving = false;
+    }
+
+    public void TakeScreenshot()
+    {
+        if (sensitivityAnalysis)
+        {
+            ScreenCapture.CaptureScreenshot($"{screenshotDirectory}{currentSeed}/S{(saProgress*100).ToString("F2")}%_ITER{evolutionIteration}.png");
+        }
+        else
+        {
+            ScreenCapture.CaptureScreenshot($"{screenshotDirectory}{currentSeed}/{evolutionIteration}.png");
+        }
     }
 
     NativeArray<Center> GenerateRandomCentroid()
@@ -353,13 +281,147 @@ public class Main : MonoBehaviour
                 Center newCenter = new Center(centroids[i].x + Random.Range(-maxCentroidMutateOffset, maxCentroidMutateOffset+1), centroids[i].y + Random.Range(-maxCentroidMutateOffset, maxCentroidMutateOffset+1), Random.Range(0, buildingCount));
                 while (newCenter.y * width + newCenter.x < 0 || newCenter.y * width + newCenter.x >= grids.Length || grids[newCenter.y * width + newCenter.x].cover <= 0)
                 {
-                    newCenter = new Center(centroids[i].x + Random.Range(-3, 4), centroids[i].y + Random.Range(-3, 4), Random.Range(0, buildingCount));
+                    newCenter = new Center(centroids[i].x + Random.Range(-maxCentroidMutateOffset, maxCentroidMutateOffset), centroids[i].y + Random.Range(-maxCentroidMutateOffset, maxCentroidMutateOffset), Random.Range(0, buildingCount));
                 }
 
                 centroids[i] = newCenter;
             }
         }
     }
+
+    public void ResetEvolution()
+    {
+        StopAllCoroutines();
+        Random.InitState(currentSeed);
+        for (int i = 0; i < populationSize; i++)
+        {
+            population[i].centroids.Dispose();
+            population[i].centroids = GenerateRandomCentroid();
+        }
+        evolutionIteration = 0;
+        bestIndex = 0;
+        evolutionIterationSinceLastChange = 0;
+        evolving = false;
+    }
+    
+    #endregion
+
+    #region SensitivityAnalysis
+
+    [Header("Sensitivity Analysis")]
+    public bool sensitivityAnalysis;
+    
+    public SensitivityAnalysis saType;
+
+    private List<string> landPercents;
+    private List<float> landPercent;
+
+    private List<string> saScores;
+    private List<float> saScore;
+
+    public float environmentHarmIndexModifier = 0;
+    public float longShortTermModifier = 0;
+    public int kCountModifier = 0;
+
+    public int sensitivitySamplingInterval = 5;
+
+    private float saProgress;
+
+    public int question = 1;
+
+    public void InitializeForSensitivityAnalysis()
+    {
+        landPercents = new List<string>();
+        landPercent = new List<float>();
+
+        saScores = new List<string>();
+        saScore = new List<float>();
+
+        if (saType == SensitivityAnalysis.LongShortTerm)
+        {
+            longShortTermModifier = -0.1f;
+        }
+        else if (saType == SensitivityAnalysis.DistancePower)
+        {
+            distancePower = 0.05f;
+        }
+    }
+
+    public void ConductSensitivityAnalysis()
+    {
+        saScores.Add(string.Join(", ", saScore));
+        saScore.Clear();
+        
+        switch (saType)
+        {
+            case SensitivityAnalysis.Environment:
+                saProgress = environmentHarmIndexModifier / 0.02f;
+         
+                landPercents.Add(string.Join(", ", landPercent));
+                landPercent.Clear();
+                if (environmentHarmIndexModifier < 0.02f)
+                {
+                    ResetEvolution();
+                }
+                else
+                {
+                    File.WriteAllLines(screenshotDirectory + $"{currentSeed} environment sensitivity analysis (index).txt", saScores);
+                    File.WriteAllLines(screenshotDirectory + $"{currentSeed} environment sensitivity analysis (land usage).txt", landPercents);
+                }
+                environmentHarmIndexModifier += 0.001f;
+                
+                break;
+            
+            case SensitivityAnalysis.LongShortTerm:
+                saProgress = (longShortTermModifier+0.1f) / 0.2f;
+                if (longShortTermModifier < 0.1f)
+                {
+                    ResetEvolution();
+                }
+                else
+                {
+                    File.WriteAllLines(screenshotDirectory + $"{currentSeed} long-short-term sensitivity analysis (index).txt", saScores);
+                }
+                longShortTermModifier += 0.02f;
+                break;
+            
+            case SensitivityAnalysis.K:
+                saProgress = kCountModifier/15f;
+                if(kCountModifier < 15f) ResetEvolution();
+                else
+                {
+                    File.WriteAllLines(screenshotDirectory + $"{currentSeed} k sensitivity analysis (index).txt", saScores);
+                }
+                kCountModifier += 1;
+                break;
+            case SensitivityAnalysis.DistancePower:
+                saProgress = (distancePower - 0.05f) / 20;
+                if(distancePower < 1) ResetEvolution();
+                else
+                {
+                    File.WriteAllLines(screenshotDirectory + $"{currentSeed} distance power sensitivity analysis (index).txt", saScores);
+                }
+
+                distancePower += 0.05f;
+                break;
+        }
+        
+        Debug.Log($"Sensitivity Analysis {saProgress*100}%");
+    }
+    
+    #endregion
+
+    #region BatchKMeans
+
+    [Header("Batch K-Means")]
+    public int kCount = 5;
+    public int totalIterations = 10000;
+    public float distancePower = 0.1f;
+    
+    public bool removeLowClusters = false;
+    public int clusterRemoveThreshold = 4;
+    
+    public Text annotation;
 
     ComputeBuffer landUsageBatchBuffer; 
     ComputeBuffer centroidsBatchBuffer;
@@ -370,8 +432,76 @@ public class Main : MonoBehaviour
 
     private NativeArray<int> nativeCoverTypeArea;
 
-    public void InitializeForBatching()
+    private NativeArray<float> indices;
+    private NativeArray<float> landUsePercentage;
+
+    public void InitializeForKMeans()
     {
+        float[,] map = JsonConvert.DeserializeObject<float[,]>(mapJson.text);
+        
+        width = map.GetLength(1); 
+        height = map.GetLength(0);
+
+        mapRender = new RenderTexture(width, height, 0, GraphicsFormat.R32_SFloat);
+        mapRender.enableRandomWrite = true;
+        mapRender.filterMode = FilterMode.Point;
+        mapRender.Create();
+
+        RenderTexture.active = mapRender;
+
+        grids = new NativeArray<Grid>(width * height, Allocator.Persistent);
+
+        coverTypeArea = Enumerable.Repeat(0, 4).ToArray();
+        
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                int coverType = (int) map[height - 1 - y, x];
+                if(coverType > 0) coverTypeArea[coverType - 1]++;
+                grids[y * width + x] = new Grid(x, y, coverType);
+            }
+        }
+
+        gridBuffer = new ComputeBuffer(grids.Length, Marshal.SizeOf(typeof(Grid)));
+        
+        float[,] scores = JsonConvert.DeserializeObject<float[,]>(buildingJson.text);
+        
+        buildingCount = scores.GetLength(1);
+
+        if (selectBuildings)
+        {
+            buildingCount = selectedBuildings.Length;
+        }
+        else
+        {
+            selectedBuildings = Enumerable.Range(0, buildingCount).ToArray();
+        }
+
+        int scoreSize = buildingCount * 4;
+
+        scoreBuffer = new ComputeBuffer(scoreSize, sizeof(float));
+
+        NativeArray<float> nativeScores = new NativeArray<float>(scoreSize, Allocator.Temp);
+        for (int i = 0; i < buildingCount; i++)
+        {
+            string line = "";
+            for (int j = 0; j < 4; j++)
+            {
+                nativeScores[i * 4 + j] = scores[j, selectedBuildings[i]];
+                line += $"{nativeScores[i * 4 + j]} ";
+            }
+            //Debug.Log(line);
+        }
+
+        scoreBuffer.SetData(nativeScores);
+
+        nativeScores.Dispose();
+
+        gridBuffer.SetData(grids);
+
+        display.material.SetTexture("_Map", mapRender);
+        
         landUsageBatchBuffer = new ComputeBuffer(populationSize * 4, sizeof(int));
         buildingAreaBatchBuffer = new ComputeBuffer(populationSize * buildingCount, sizeof(int));
         
@@ -379,8 +509,7 @@ public class Main : MonoBehaviour
         centroidsBatchBuffer = new ComputeBuffer(populationSize * kCount, Marshal.SizeOf(typeof(Center)), ComputeBufferType.Structured, ComputeBufferMode.SubUpdates);
 
         batchKernel = batchClusteringShader.FindKernel("BatchClustering");
-        
-                
+
         batchClusteringShader.SetInt("width", width);
         batchClusteringShader.SetInt("height", height);
         batchClusteringShader.SetInt("layer_size", populationSize);
@@ -393,6 +522,14 @@ public class Main : MonoBehaviour
         batchClusteringShader.SetTexture(batchKernel, "display", mapRender);
 
         nativeCoverTypeArea = new NativeArray<int>(coverTypeArea, Allocator.Persistent);
+        
+        saScores = new List<string>();
+        saScore = new List<float>();
+        landPercent = new List<float>();
+        landPercents = new List<string>();
+        
+        indices = new NativeArray<float>(populationSize, Allocator.Persistent);
+        landUsePercentage = new NativeArray<float>(populationSize, Allocator.Persistent);
     }
 
     public void ClusterKMeansBatch()
@@ -401,9 +538,9 @@ public class Main : MonoBehaviour
         batchClusteringShader.SetInt("building_count", buildingCount);
         batchClusteringShader.SetInt("global_k_count", kCount);
         
-        annotation.text = $"Batch Cluster: {populationSize}\nK = {kCount}\nDistance Power = {distancePower}";
+        annotation.text = $"Batch Cluster: {populationSize}\nK = {kCount-kCountModifier}\nDistance Power = {distancePower}";
         
-        kCountBuffer.SetData(Enumerable.Repeat(kCount, populationSize).ToArray());
+        kCountBuffer.SetData(Enumerable.Repeat(kCount-kCountModifier, populationSize).ToArray());
 
         for (int i = 0; i < populationSize; i++)
         {
@@ -417,7 +554,7 @@ public class Main : MonoBehaviour
             buildingAreaBatchBuffer.SetData(Enumerable.Repeat(0, buildingCount * populationSize).ToArray());
             landUsageBatchBuffer.SetData(Enumerable.Repeat(0, 4 * populationSize).ToArray());
             
-            batchClusteringShader.Dispatch(batchKernel, 12, 11, 13);
+            batchClusteringShader.Dispatch(batchKernel, Mathf.FloorToInt(width/8f), Mathf.FloorToInt(height/8f), 13);
             //batchClusteringShader.Dispatch(batchKernel, Mathf.FloorToInt(grids.Length/8f), 13, 1);
 
             centroidsRead = new Center[kCount * populationSize];
@@ -430,7 +567,7 @@ public class Main : MonoBehaviour
             {
                 int validCentroids = 0;
 
-                for (int i = 0; i < kCount; i++)
+                for (int i = 0; i < kCount-kCountModifier; i++)
                 {
                     int index = j * kCount + i;
                     
@@ -465,15 +602,19 @@ public class Main : MonoBehaviour
         buildingAreaBatchBuffer.GetData(buildingAreaRead);
         
         var ahpJob = new AhpIndexJob();
-        NativeArray<float> indices = new NativeArray<float>(populationSize, Allocator.Persistent);
+        
         var nativeBuildingAreas = new NativeArray<int>(buildingAreaRead, Allocator.Persistent);
         var nativeLandUsage = new NativeArray<int>(landUsageRead, Allocator.Persistent);
-            
+
         ahpJob.indices = indices;
         ahpJob.coverTypeArea = nativeCoverTypeArea;
         ahpJob.buildingAreas = nativeBuildingAreas;
         ahpJob.landUsage = nativeLandUsage;
         ahpJob.buildingCount = buildingCount;
+        ahpJob.environmentHarmIndexModifier = environmentHarmIndexModifier;
+        ahpJob.landUsePercentage = landUsePercentage;
+        ahpJob.longShortTermModifier = longShortTermModifier;
+        ahpJob.question = question;
             
         var handler = ahpJob.Schedule(populationSize, 16);
         handler.Complete();
@@ -483,10 +624,10 @@ public class Main : MonoBehaviour
             //float legacyAhp = GetAhpIndex(landUsageRead, buildingAreaRead, i);
             //Debug.Log($"{legacyAhp - indices[i]}");
             population[i].index = indices[i];
+            population[i].landUsePercentage = landUsePercentage[i];
             //population[i].index = legacyAhp;
         }
-
-        indices.Dispose();
+        
         nativeBuildingAreas.Dispose();
         nativeLandUsage.Dispose();
     }
@@ -498,279 +639,23 @@ public class Main : MonoBehaviour
         kCountBuffer.Dispose();
         buildingAreaBatchBuffer.Dispose();
         nativeCoverTypeArea.Dispose();
+        indices.Dispose();
+        landUsePercentage.Dispose();
     }
+    
+    #endregion
 
-    public IEnumerator ClusterKMeans(NativeArray<Center> centroidsRef)
-    {
-        if(!geneticAlgorithm) numClusters++;
-        clusteringShader.SetInt("k_count", kCount);
-        clusteringShader.SetFloat("distance_power", distancePower);
-        clusteringShader.SetInt("building_count", buildingCount);
-
-        for (int i = 0; i < buildingCount; i++)
-        {
-            buildingClusters[i] = 0;
-        }
-
-        NativeArray<Center> centroids = new NativeArray<Center>(centroidsRef, Allocator.Persistent);
-
-        ComputeBuffer centeroidsBuffer = new ComputeBuffer(kCount, Marshal.SizeOf(typeof(Center)));
-        centeroidsBuffer.SetData(centroids);
-
-        clusteringShader.SetBuffer(kernel, "CentroidsBuffer", centeroidsBuffer);
-
-        Center[] centroidsRead = new Center[kCount];
-
-        for (int iter = 0; iter < totalIterations; iter++)
-        {
-            landUsageBuffer.SetData(Enumerable.Repeat(0, 4).ToArray());
-            
-            clusteringShader.Dispatch(kernel, 12, 11, 1);
-
-            centroidsRead = new Center[kCount];
-            centeroidsBuffer.GetData(centroidsRead);
-
-            int changes = 0;
-
-            int validCentroids = 0;
-
-            for (int i = 0; i < kCount; i++)
-            {
-                if (centroidsRead[i].totalX <= clusterRemoveThreshold && removeLowClusters)
-                {
-                    continue;
-                }
-
-                if (centroidsRead[i].totalX <= 0)
-                {
-                    validCentroids++;
-                    continue;
-                }
-
-                Center newCenter = new Center(Mathf.RoundToInt(centroidsRead[i].cumX * 1.0f / centroidsRead[i].totalX),
-                    Mathf.RoundToInt(centroidsRead[i].cumY * 1.0f / centroidsRead[i].totalY), centroidsRead[i].buildingType);
-                if (newCenter.x != centroids[i].x || newCenter.y != centroids[i].y)
-                {
-                    changes++;
-                }
-                centroids[validCentroids++] = newCenter;
-            }
-
-            if (changes <= 0)
-            {
-                annotation.text = $"Converged at :{iter + 1}/{totalIterations}\nK = {kCount}\nDistance Power = {distancePower}";
-                break;
-            }
-            
-            centeroidsBuffer.SetData(centroids);
-            
-            clusteringShader.SetInt("k_count", validCentroids);
-
-            annotation.text = $"Iterations:{iter + 1}/{totalIterations}\nK = {kCount}\nDistance Power = {distancePower}";
-
-            if (iterationUpdateRate > 0)
-            {
-                yield return new WaitForSeconds(iterationUpdateRate);
-            }
-        }
-
-        if (calculateMostClustered || evaluateMetrics)
-        {
-            for (int i = 0; i < kCount; i++)
-            {
-                buildingClusters[centroidsRead[i].buildingType] += centroidsRead[i].totalX;
-            }
-        }
-        
-        if(calculateMostClustered)
-        {
-            Debug.Log($"{string.Join(' ', buildingClusters)}");
-
-            var sorted = buildingClusters
-                .Select((x, i) => new KeyValuePair<int, int>(x, i))
-                .OrderByDescending(x => x.Key)
-                .ToList();
-
-            string output = "Most Clustered Buildings: ";
-            for (int j = 0; j < buildingCount; j++)
-            {
-                output += $"{labels[selectedBuildings[sorted.ElementAt(j).Value]]}, ";
-            }
-
-            Debug.Log(output);
-        }
-
-        if (evaluateMetrics)
-        {
-            int[] landUsage = new int[4];
-            landUsageBuffer.GetData(landUsage);
-            clusterIndex = GetAhpIndex(landUsage, buildingClusters);
-        }
-
-        centroids.Dispose();
-        centeroidsBuffer.Dispose();
-
-        inProcess = false;
-    }
-
-    public float GetAhpIndex(int[] landUsage, int[] buildingAreas, int startIndex = 0)
-    {
-        float profits = 0;
-        float costs = 0;
-        float paybackIndices = 0;
-        float longTermDevelopments = 0;
-        float developmentDurationIndices = 0;
-        float communityNeeds = 0;
-
-        int totalArea = 0;
-
-        for (int i = 0; i < buildingCount; i++)
-        {
-            float profit = 0;
-            float cost = 0;
-            float paybackDuration = 0;
-            float longTermDevelopment = 0;
-            float constructionDuration = 0;
-            float communityNeed = 0;
-            if (i == 0)//housing
-            {
-                profit = 223.8f;
-                //there are two values?
-                cost = 2152.85f;
-                paybackDuration = 10.6884f;
-                longTermDevelopment = 1.2f;
-                constructionDuration = 1;
-                communityNeed = 1f;
-            }
-            else if (i == 1)//farms
-            {
-                
-                profit = 0.3153f;
-                cost = 0.7809f;
-                paybackDuration = 2.4767f;
-                longTermDevelopment = 1f;
-                constructionDuration = 1;
-                communityNeed = 0.6f;
-            }
-            else if (i == 2)//solar farms
-            {
-                profit = 13.9931f;
-                cost = 46.3924f;
-                paybackDuration = 3.3154f;
-                longTermDevelopment = 1f;
-                constructionDuration = 1f;
-                communityNeed = 0f;
-            }
-            else if (i == 3)//ranch
-            {
-                profit = 0.2231f;
-                cost = 0.7136f;
-                paybackDuration = 3.1986f;
-                longTermDevelopment = 1f;
-                constructionDuration = 1 / 6f;
-                communityNeed = 0.6f;
-            }
-            else if (i == 4)//agricultural visitor
-            {
-                profit = 2.4711f;
-                cost = 12.3553f;
-                paybackDuration = 5f;
-                longTermDevelopment = 0.7f;
-                constructionDuration = 3f;
-                communityNeed = 1.7f;
-            }
-
-            int buildingArea = buildingAreas[startIndex * buildingCount +i];
-            
-            profit *= buildingArea;
-            cost *= buildingArea;
-            //communityNeed *= buildingArea;
-
-            profits += profit;
-            costs += cost;
-
-            totalArea += buildingArea;
-            
-            paybackIndices += PaybackIndex(paybackDuration) * buildingArea;
-            
-            longTermDevelopments += longTermDevelopment/2 * buildingArea;
-            
-            developmentDurationIndices += DevelopmentDurationIndex(constructionDuration) * buildingArea;
-            communityNeeds += communityNeed * buildingArea;
-        }
-
-        if (distributionAnalysis)
-        {
-            totalProfits.Add(profits);
-            totalCosts.Add(costs);
-            totalCommunityNeeds.Add(communityNeeds);
-        }
-
-        float environmentHarmIndex = 0;
-        environmentHarmIndex += landUsage[startIndex * 4 + 0] * 1.0f / coverTypeArea[0] * 4;
-        environmentHarmIndex += landUsage[startIndex * 4 + 2] * 1.0f / coverTypeArea[2] * 3;
-        environmentHarmIndex += landUsage[startIndex * 4 + 1] * 1.0f / coverTypeArea[1] * 2;
-        environmentHarmIndex /= 9f;
-
-        /*for (int i = 0; i < 4; i++)
-        {
-            Debug.Log($"{landUsage[i]} / {coverTypeArea[i]}");
-        }*/
-        
-        float profitIndex = EvaluateDistribution(profits, profitQuartiles);
-        float constructionCostIndex = EvaluateDistribution(costs, costQuartiles);
-        //Debug.Log(costs);
-        float developmentDurationIndex = developmentDurationIndices / totalArea;
-        float paybackIndex = paybackIndices / totalArea;
-        float communityFitIndex = communityNeeds / (2f * totalArea);
-        float longTermDevelopmentIndex = longTermDevelopments / totalArea;
-
-        //Debug.Log($"Average Profit Index {profits.Average()}");
-        
-        //Debug.Log($"{profitIndex} {paybackIndex} {constructionCostIndex} {longTermDevelopmentIndex} {environmentHarmIndex} {communityFitIndex}");
-
-        float index =
-            0.379f * profitIndex +
-            0.179f * paybackIndex +
-            0.122f * constructionCostIndex +
-            0.179f * longTermDevelopmentIndex +
-            0.066f * developmentDurationIndex -
-            0.032f * environmentHarmIndex +
-            0.042f * communityFitIndex;
-
-        return index;
-    }
-
-    float PaybackIndex(float paybackYear)
-    {
-        return 1 - 1 / (1 + Mathf.Exp(-(3 / 10 * paybackYear + 4.5f)));
-    }
-
-    float DevelopmentDurationIndex(float constructionDuration)
-    {
-        return Mathf.Exp(-0.6f * constructionDuration);
-    }
-
-    float EvaluateDistribution(float value, Vector3 distribution)
-    {
-        if (value < distribution.x)
-        {
-            return Mathf.InverseLerp(0, distribution.x, value);
-        }
-        else if (value < distribution.y)
-        {
-            return Mathf.InverseLerp(distribution.x, distribution.y, value);
-        }
-        else if(value < distribution.z)
-        {
-            return Mathf.InverseLerp(distribution.y, distribution.z, value);
-        }
-        else
-        {
-            return 1;
-        }
-    }
-
+    #region DistributionAnalysis
+    
+    [Header("Distribution Analysis")]
+    public bool distributionAnalysis = false;
+    
+    private List<float> totalProfits = new List<float>();
+    private List<float> totalCosts = new List<float>();
+    private List<float> totalCommunityNeeds = new List<float>();
+    
+    
+    public LineChart lineChart;
     public int plotIntervals = 400;
 
     void VisualizeDistribution(List<float> values)
@@ -803,6 +688,8 @@ public class Main : MonoBehaviour
         
         return $"{min} | {lowerQ} {median} {upperQ} | {max}";
     }
+    
+    #endregion
 
     public int GetIndex(int x, int y)
     {
@@ -815,7 +702,17 @@ public class Main : MonoBehaviour
         gridBuffer.Dispose();
         scoreBuffer.Dispose();
         //if(centeroidsBuffer != null && centeroidsBuffer.IsValid()) centeroidsBuffer.Dispose();
-        landUsageBuffer.Dispose();
+
+        string oldDir = $"{screenshotDirectory}{currentSeed}";
+        
+        string newDir = $"{screenshotDirectory}ITER{evolutionIteration}_K{kCount}_D{distancePower}_SEED{currentSeed}";
+
+        if (sensitivityAnalysis)
+        {
+            newDir = $"{screenshotDirectory}SA_{Enum.GetName(typeof(SensitivityAnalysis), saType)}_{currentSeed}_{saProgress*100}%";
+        }
+        
+        Directory.Move(oldDir, newDir);
 
         foreach (var gene in population)
         {

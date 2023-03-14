@@ -1269,35 +1269,33 @@ MonoBehaviour:
   buildingLegendLabel: {fileID: 1911345428}
   batchClusteringShader: {fileID: 7200000, guid: d0ff56837faca47228bb210fc6a9c3d2,
     type: 3}
-  clusteringShader: {fileID: 7200000, guid: 93c94a2f568ad49f3969292495d6909b, type: 3}
   selectBuildings: 1
-  annotation: {fileID: 1562152895}
-  totalIterations: 50
-  kCount: 20
-  distancePower: 0.2
-  calculateMostClustered: 0
-  clusterRemoveThreshold: 20
-  removeLowClusters: 1
-  iterationUpdateRate: 0
-  continuousCluster: 0
-  evaluateMetrics: 1
-  distributionAnalysis: 0
-  numClusters: 0
-  lineChart: {fileID: 1217162896}
-  populationSize: 100
-  currentSeed: 0
+  fixedSeed: 0
+  currentSeed: 42
   seedLabel: {fileID: 444337843}
-  recordEvolution: 1
-  profitQuartiles: {x: 83110.52, y: 153891.6, z: 352343.6}
-  costQuartiles: {x: 782594.3, y: 1085982, z: 1454249}
-  communityNeedsQuartiles: {x: 1978.4, y: 2209, z: 3794.8}
+  geneticAlgorithm: 1
   evolutionRate: 0
   timer: 0.5
-  geneticAlgorithm: 1
-  maxCentroidMutateOffset: 100
+  maxCentroidMutateOffset: 60
+  populationSize: 100
   evolutionLabel: {fileID: 794846138}
-  BatchProcess: 1
+  recordEvolution: 1
   geneMutationChance: 0.5
+  sensitivityAnalysis: 0
+  saType: 3
+  environmentHarmIndexModifier: 0
+  longShortTermModifier: 0
+  kCountModifier: 0
+  sensitivitySamplingInterval: 4
+  question: 1
+  kCount: 40
+  totalIterations: 50
+  distancePower: 0.2
+  removeLowClusters: 1
+  clusterRemoveThreshold: 20
+  annotation: {fileID: 1562152895}
+  distributionAnalysis: 0
+  lineChart: {fileID: 1217162896}
   plotIntervals: 50
 --- !u!4 &295858461
 Transform:
